@@ -1,14 +1,13 @@
-package org.mlbase.ml
+package org.apache.spark.mllib.featurization
 
-import spark._
-import spark.rdd._
 import scala.collection.mutable.ArrayBuffer
-import spark.SparkContext
-import spark.SparkContext._
-import spark.broadcast._
-import scala.math.ceil
-import spark.storage._
-
+import scala.util.Random
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._
+import org.apache.spark.rdd.RDD
+import org.apache.spark.Logging
+import org.apache.spark.mllib.util._
+import org.apache.spark.broadcast._
 import org.mlbase.runtime.MLBaseRDDFunctions._
 
 import breeze.linalg._

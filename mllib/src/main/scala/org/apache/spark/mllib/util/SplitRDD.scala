@@ -1,10 +1,4 @@
-package spark.rdd
-
-import spark.Dependency
-import spark.NarrowDependency
-import spark.Partition
-import spark.RDD
-import spark.TaskContext
+package org.apache.spark.rdd
 
 
 class SplitRDD[T: ClassManifest](

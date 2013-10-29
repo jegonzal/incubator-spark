@@ -1,7 +1,17 @@
-package org.mlbase.ml
+package org.apache.spark.mllib.clustering
+
+import scala.collection.mutable.ArrayBuffer
+import scala.util.Random
+
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._
+import org.apache.spark.rdd.RDD
+import org.apache.spark.Logging
+import org.apache.spark.mllib.util._
+import org.apache.spark.broadcast._
+import org.mlbase.runtime.MLBaseRDDFunctions._
 
 import breeze.linalg._
-import spark.RDD
 
 case class DPMeansOFLModelParameters(
   trainingTime: Array[Long],

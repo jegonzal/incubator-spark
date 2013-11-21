@@ -1,8 +1,8 @@
-package org.apache.spark.mllib
+package org.apache.spark.mllib.util
 
-import spark.rdd.SplitRDD
-import scala.Array
-import spark.RDD
+import org.apache.spark.rdd.SplitRDD
+import org.apache.spark.rdd.RDD
+
 
 
 /**

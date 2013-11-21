@@ -11,13 +11,18 @@ import org.apache.spark.broadcast._
 import org.apache.spark.mllib.util._
 import org.apache.spark.mllib.util.MLiRDDFunctions._
 
+import org.jblas.DoubleMatrix
+import org.jblas.Solve
 
-import breeze.linalg._
+import org.apache.spark.mllib.util._
+import org.apache.spark.mllib.util.MLiRDDFunctions._
+import org.apache.spark.mllib.util.VectorOps._
+import org.apache.spark.mllib.util.DenseVector
 
 
 case class BPMeansModelParameters(
   trainingTime: Array[Long],
-  features: Array[DenseVector[Double]],
+  features: Array[Array[Double]],
   numFeatures: Array[Int],
   numProposed: Array[Int],
   numAccepted: Array[Int],
@@ -25,13 +30,13 @@ case class BPMeansModelParameters(
 )// extends ModelParameters(trainingTime.last)
 
 case class BPMeansModel (
-  data: RDD[DenseVector[Double]],
+  data: RDD[Array[Double]],
   trainParams: BPMeansParameters,
   params: BPMeansModelParameters
 )// extends Model(data, trainParams, params)
 {
 
-  def predict(x: DenseVector[Double]) : Null = {
+  def predict(x: Array[Double]) : Null = {
     null
   }
 
@@ -48,9 +53,9 @@ case class BPMeansParameters(
   blockSize: Int,
   numProcessors: Int,
   maxIterations: Int
-) extends AlgorithmParameters
+) // extends AlgorithmParameters
 
-object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansParameters]
+object BPMeansAlgorithm //extends Algorithm[Array[Double], Null, BPMeansParameters]
 {
 
   def parseParameters(params: Map[String, String]) : BPMeansParameters = {
@@ -105,14 +110,14 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     sameColumns.toArray
   }
 
-  def serialAcceptFeatures(proposedFeatures_t: Array[DenseVector[Double]], lambda: Double) : Array[DenseVector[Double]] = {
+  def serialAcceptFeatures(proposedFeatures_t: Array[Array[Double]], lambda: Double) : Array[Array[Double]] = {
     //proposedFeatures_t.foreach(println)
-    var newFeatures = ArrayBuffer[DenseVector[Double]]()
+    var newFeatures = ArrayBuffer[Array[Double]]()
     var proposedFeatures = proposedFeatures_t
     while (proposedFeatures.length > 0){
       // Pick up first item as feature
       val newF = proposedFeatures(0)
-      if (norm(newF) >= lambda){
+      if (norm(newF) >= lambda) {
         //println("New feature: " + newF)
         newFeatures += newF
         // Add new feature
@@ -128,9 +133,9 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     return newFeatures.toArray
   }
 
-  def serialAcceptFeatures_old(proposedFeatures_t: Array[DenseVector[Double]], lambda: Double) : Array[DenseVector[Double]] = {
+  def serialAcceptFeatures_old(proposedFeatures_t: Array[Array[Double]], lambda: Double) : Array[Array[Double]] = {
     //proposedFeatures_t.foreach(println)
-    var newFeatures = ArrayBuffer[DenseVector[Double]]()
+    var newFeatures = ArrayBuffer[Array[Double]]()
     var proposedFeatures = proposedFeatures_t
     while (proposedFeatures.length > 0){
       // Pick up first item as feature
@@ -150,19 +155,19 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     return newFeatures.toArray
   }
 
-  def sampleZ(x: DenseVector[Double], z: Array[Boolean], features_bc: Broadcast[Array[DenseVector[Double]]])
-  : (Array[Boolean],DenseVector[Double],Double) = {
+  def sampleZ(x: Array[Double], z: Array[Boolean], features_bc: Broadcast[Array[Array[Double]]])
+  : (Array[Boolean],Array[Double],Double) = {
     val features = features_bc.value
-    var residual = x.copy
+    var residual = x.clone
     (0 until z.length).foreach(i => {
       if (z(i)) residual = residual - features(i)
       })
     var newZ = new Array[Boolean](features.length)
     (0 until z.length).foreach(i => newZ(i) = z(i))
-    var resNorm = residual.norm(2)
+    var resNorm = residual.norm
     (0 until newZ.length).foreach(i => {
-      var res0     = if ( newZ(i)) residual + features(i) else residual.copy
-      var res1     = if (!newZ(i)) residual - features(i) else residual.copy
+      var res0     = if ( newZ(i)) residual + features(i) else residual.clone
+      var res1     = if (!newZ(i)) residual - features(i) else residual.clone
       var resNorm0 = if ( newZ(i)) norm(res0) else resNorm
       var resNorm1 = if (!newZ(i)) norm(res1) else resNorm
       if (resNorm0 < resNorm1){
@@ -194,26 +199,26 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     newZ.toArray
   }
 
-  def outerProduct(z: Array[Boolean], x: DenseVector[Double]) : DenseMatrix[Double] = {
-    val zlen = z.length
-    val xlen = x.length
-    val zTx = DenseMatrix.zeros[Double](zlen,xlen)
-    ((0 until zlen) zip z).foreach(iz => if (iz._2) zTx(iz._1,::) := x)
-    zTx
-  }
+  // def outerProduct(z: Array[Boolean], x: Array[Double]) : DenseMatrix[Double] = {
+  //   val zlen = z.length
+  //   val xlen = x.length
+  //   val zTx = DenseMatrix.zeros[Double](zlen,xlen)
+  //   ((0 until zlen) zip z).foreach(iz => if (iz._2) zTx(iz._1,::) := x)
+  //   zTx
+  // }
 
-  def computeObjVal(X: Array[RDD[DenseVector[Double]]], Z: Array[RDD[Array[Boolean]]], features: Array[DenseVector[Double]], lambda: Double, dim: Int, sc: SparkContext) : Double = {
+  def computeObjVal(X: Array[RDD[Array[Double]]], Z: Array[RDD[Array[Boolean]]], features: Array[Array[Double]], lambda: Double, dim: Int, sc: SparkContext) : Double = {
     val features_bc = sc.broadcast(features)
     val objval = features.length * lambda*lambda + (X zip Z).map(XZ => {
       (XZ._1 zip XZ._2).map(xz => {
-        val n = norm(xz._1 -(xz._2 zip features_bc.value).map(zf => if (zf._1) zf._2 else zf._2*0.0).foldLeft(DenseVector.zeros[Double](dim))(_+_))
+        val n = norm(xz._1 -(xz._2 zip features_bc.value).map(zf => if (zf._1) zf._2 else zf._2*0.0).foldLeft(Array.fill(dim)(0.0))(_+_))
         n*n
         }).reduce(_+_)
       }).reduce(_+_)
     objval
   }
 
-  def train(data: RDD[DenseVector[Double]], params: BPMeansParameters, sc: SparkContext) : BPMeansModel = {
+  def train(data: RDD[Array[Double]], params: BPMeansParameters, sc: SparkContext) : BPMeansModel = {
 
     // Parameters
     val lambda = params.lambda
@@ -245,12 +250,12 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     val dim = X(0).first.length
 
     // Initialize features, Z
-    var features = Array[DenseVector[Double]]()
+    var features = Array[Array[Double]]()
     var Z = X.map(xi => xi.map(_ => Array[Boolean]()))
     objvals += computeObjVal(X,Z,features,lambda,dim,sc)
 
     // Bootstrap!
-    features = serialAcceptFeatures(X(0).take(ceil((blockSize*numProcessors).toDouble/16.0).toInt), lambda)
+    features = serialAcceptFeatures(X(0).take(math.ceil((blockSize*numProcessors).toDouble/16.0).toInt), lambda)
 
     var hasConverged = false
     while (!hasConverged && numIterations < maxIterations){
@@ -303,45 +308,49 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
 
       // Compute ZTZ and ZTX
 //      val ZTZ = Z.map(
-//        _.map(z=>outerProduct(z,new DenseVector[Double](z.map(zz=>if(zz) 1.0 else 0.0))))
+//        _.map(z=>outerProduct(z,new Array[Double](z.map(zz=>if(zz) 1.0 else 0.0))))
 //        .reduce(_+_)).reduceLeft(_+_)
 
 
       val ZTZ = Z.map(zRDD =>
-        zRDD.aggregate[DenseMatrix[Double]](null)(
+        zRDD.aggregate[DoubleMatrix](null)(
           (acc, z) => {
             val zlen = z.length
-            val newAcc = if(acc != null) acc else DenseMatrix.zeros[Double](zlen,zlen)
-            for(i <- 0 until zlen if z(i) ; j <- 0 until zlen if z(j)) { newAcc(i,j) += 1.0 }
+            val newAcc = if(acc != null) acc else DoubleMatrix.zeros(zlen,zlen)
+            for(i <- 0 until zlen if z(i) ; j <- 0 until zlen if z(j)) {
+              newAcc.put(i,j, newAcc.get(i,j) + 1.0)
+            }
            newAcc
           },
-          (acc1, acc2) => if(acc1 == null) acc2 else if( acc2 == null) acc1 else acc1 + acc2
+          (acc1, acc2) => if(acc1 == null) acc2 else if( acc2 == null) acc1 else acc1.add(acc2)
         )
-      ).reduceLeft(_+_)
+      ).reduceLeft(_.add(_))
 
 
       val ZTX = (X zip Z).map{
         case (xRDD, zRDD) => {
-          xRDD.zip(zRDD).aggregate[DenseMatrix[Double]](null)(
+          xRDD.zip(zRDD).aggregate[DoubleMatrix](null)(
             (acc, xz) => {
               val x = xz._1
               val z = xz._2
               val zlen = z.length
               val xlen = x.length
-              val newAcc = if(acc != null) acc else DenseMatrix.zeros[Double](zlen,xlen)
-              for(i <- 0 until zlen if z(i); j <- 0 until xlen) { newAcc(i,j) += x(j) }
+              val newAcc = if(acc != null) acc else DoubleMatrix.zeros(zlen,xlen)
+              for(i <- 0 until zlen if z(i); j <- 0 until xlen) {
+                newAcc.put(i,j, newAcc.get(i,j) + x(j))
+              }
               newAcc
             },
-            (acc1, acc2) => if(acc1 == null) acc2 else if( acc2 == null) acc1 else acc1 + acc2
+            (acc1, acc2) => if(acc1 == null) acc2 else if( acc2 == null) acc1 else acc1.add(acc2)
           )
         }
-      }.reduceLeft(_+_)
+      }.reduceLeft(_.add(_))
 
       println("\tcompute stats complete")
 
       // Compute new features
-      val At = (ZTZ \ ZTX).t
-      val featuresBuffer = ArrayBuffer[DenseVector[Double]]()
+      val At = Solve.solve(ZTZ, ZTX).transpose
+      val featuresBuffer = ArrayBuffer[Array[Double]]()
       (0 until At.cols).foreach(i => featuresBuffer += At(::,i))
       features = featuresBuffer.toArray
 

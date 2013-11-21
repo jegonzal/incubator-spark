@@ -11,13 +11,12 @@ import org.apache.spark.broadcast._
 
 import org.apache.spark.mllib.util._
 import org.apache.spark.mllib.util.MLiRDDFunctions._
-
-
-import breeze.linalg._
+import org.apache.spark.mllib.util.VectorOps._
+import org.apache.spark.mllib.util.DenseVector
 
 case class DPMeansOFLModelParameters(
   trainingTime: Array[Long],
-  centers: Array[DenseVector[Double]],
+  centers: Array[Array[Double]],
   numFeatures: Array[Int],
   numProposed: Array[Int],
   numAccepted: Array[Int],
@@ -26,7 +25,7 @@ case class DPMeansOFLModelParameters(
 ) //extends ModelParameters(trainingTime.last)
 
 case class DPMeansOFLModel (
-  data: RDD[DenseVector[Double]],
+  data: RDD[Array[Double]],
   trainParams: DPMeansOFLParameters,
   params: DPMeansOFLModelParameters
 ) //extends Model(data, trainParams, params)
@@ -39,9 +38,9 @@ case class DPMeansOFLParameters(
   numProcessors: Int,
   maxIterations: Int,
   q: Double
-) extends AlgorithmParameters
+) //extends AlgorithmParameters
 
-object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMeansOFLParameters]
+object DPMeansOFLAlgorithm // extends Algorithm[Array[Double], Null, DPMeansOFLParameters]
 {
   Random.setSeed(43)
 
@@ -54,9 +53,9 @@ object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMea
     new DPMeansOFLParameters(lambda,blockSize,numProcessors,maxIterations,q)
   }
 
-  def sampleZ(x: DenseVector[Double], centers_bc: Broadcast[Array[DenseVector[Double]]], lambda: Double, q: Double) : (Int,Double) = {
+  def sampleZ(x: Array[Double], centers_bc: Broadcast[Array[Array[Double]]], lambda: Double, q: Double) : (Int,Double) = {
     val centers = centers_bc.value
-    val dists = centers.map(c => norm(x-c))
+    val dists = centers.map(c => VectorOps.l2dist(x, c))
     var kstar_mindist = ((0 until centers.length) zip dists).foldLeft((-1,lambda))((a,b) => if (a._2 < b._2) a else b)
     if (q > 0.0){
       if (Random.nextDouble <= (kstar_mindist._2/lambda)) kstar_mindist = (-1,kstar_mindist._2)
@@ -64,15 +63,15 @@ object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMea
     kstar_mindist
   }
 
-  def serialAcceptCenters(proposedCenters_dist: Array[(DenseVector[Double],Double)], q: Double) : Array[DenseVector[Double]] = {
+  def serialAcceptCenters(proposedCenters_dist: Array[(Array[Double],Double)], q: Double) : Array[Array[Double]] = {
     //proposedCenters_dist.map(_._1).foreach(println)
-    val newCenters = ArrayBuffer[DenseVector[Double]]()
+    val newCenters = ArrayBuffer[Array[Double]]()
     proposedCenters_dist.foreach(cd => {
-      val dists = newCenters.map(nc => norm(nc-cd._1))
+      val dists = newCenters.map(nc => VectorOps.l2dist(nc, cd._1))
       val mindist = dists.foldLeft(cd._2)((a,b) => if (a < b) a else b)
       if (q > 0.0){
         if (Random.nextDouble <= mindist/cd._2) newCenters += cd._1
-      }else{
+      } else {
         if (mindist >= cd._2) newCenters += cd._1
       }
       })
@@ -81,27 +80,31 @@ object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMea
     newCenters.toArray
   }
 
-  def resampleZ(xz: (DenseVector[Double],Int), newCenters_bc: Broadcast[Array[DenseVector[Double]]]) : Int = {
+  def resampleZ(xz: (Array[Double],Int), newCenters_bc: Broadcast[Array[Array[Double]]]) : Int = {
     val newCenters = newCenters_bc.value
     if (xz._2 == -1){
-      val dists = newCenters.map(c => norm(xz._1-c))
+      val dists = newCenters.map(c => VectorOps.l2dist(xz._1, c))
       ((0 until newCenters.length) zip dists).reduceLeft((a,b) => if (a._2 < b._2) a else b)._1
-    }else{
+    } else {
       xz._2
     }
   }
 
-  def computeObjVal(X: Array[RDD[DenseVector[Double]]], Z: Array[RDD[Int]], centers: Array[DenseVector[Double]], lambda: Double, dim: Int, sc: SparkContext) : Double = {
+  def computeObjVal(X: Array[RDD[Array[Double]]], Z: Array[RDD[Int]], centers: Array[Array[Double]], lambda: Double, dim: Int, sc: SparkContext) : Double = {
     val centers_bc = sc.broadcast(centers)
     centers.length * lambda*lambda + (X zip Z).map(XZ => {
       (XZ._1 zip XZ._2).map(xz => {
-        val n = if (xz._2 == -1) Double.PositiveInfinity else norm(xz._1 - centers_bc.value(xz._2))
+        val n = if (xz._2 == -1) {
+          Double.PositiveInfinity
+        } else {
+          VectorOps.l2dist(xz._1, centers_bc.value(xz._2))
+        }
         n*n
         }).reduce(_+_)
       }).reduce(_+_)
   }
 
-  def train(data: RDD[DenseVector[Double]], params: DPMeansOFLParameters, sc: SparkContext) : DPMeansOFLModel = {
+  def train(data: RDD[Array[Double]], params: DPMeansOFLParameters, sc: SparkContext) : DPMeansOFLModel = {
 
     // Parameters
     val lambda = params.lambda
@@ -135,20 +138,20 @@ object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMea
     val dim = X(0).first.length
 
     // Initialize centers, Z
-    var centers = Array[DenseVector[Double]]()
+    var centers = Array[Array[Double]]()
     var Z = X.map(xi => xi.map(_=> -1))
     objvals += computeObjVal(X,Z,centers,lambda,dim,sc)
 
     // Bootstrap!
     if (q < 0.0)
-      centers = serialAcceptCenters(X(0).take(ceil((blockSize*numProcessors).toDouble/16.0).toInt).map(x => (x,lambda)), q)
+      centers = serialAcceptCenters(X(0).take(math.ceil((blockSize*numProcessors).toDouble/16.0).toInt).map(x => (x,lambda)), q)
 
     var hasConverged = false
     while (!hasConverged && numIterations < maxIterations){
       println("Iteration #" + numIterations)
 
       val iterStart = System.currentTimeMillis
-      val oldCenters = centers.map(_.copy)
+      val oldCenters = centers.map(_.clone)
       var centers_bc = sc.broadcast(centers)
       // Iterate through blocks to sample Z and learn new centers
       (0 until numEpochs).foreach(t => {
@@ -178,8 +181,12 @@ object DPMeansOFLAlgorithm // extends Algorithm[DenseVector[Double], Null, DPMea
       // Compute new centers
       if (q < 0.0){
         val clusterCount = new Array[Int](centers.size)
-        val clusterSums  = clusterCount.map(_=> DenseVector.zeros[Double](dim))
-        val allStats = (X zip Z).map(XZ => (XZ._1 zip XZ._2).map(xz => (xz._2,(xz._1,1))).reduceByKey{case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)}.collect)
+        val clusterSums  = clusterCount.map(_ => Array.fill(dim)(0.0))
+        val allStats = (X zip Z).map { XZ =>
+          (XZ._1 zip XZ._2).map(xz => (xz._2,(xz._1,1))).reduceByKey{
+            case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)
+          }.collect
+        }
         allStats.foreach(_.foreach(zxc => {
             val z = zxc._1
             val x = zxc._2._1

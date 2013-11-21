@@ -1,4 +1,4 @@
-package org.mlbase.runtime
+package org.apache.spark.mllib
 
 import spark.rdd.SplitRDD
 import scala.Array
@@ -11,7 +11,7 @@ import spark.RDD
  *
  * To use the implicit conversion, `import MLBaseRDDFunctions._`
  */
-class MLBaseRDDFunctions[T: ClassManifest](self: RDD[T]) {
+class MLiRDDFunctions[T: ClassManifest](self: RDD[T]) {
 
   /**
    * Return a set of RDDs, each of which corresponds to a disjoint subset
@@ -36,6 +36,6 @@ class MLBaseRDDFunctions[T: ClassManifest](self: RDD[T]) {
 }
 
 
-object MLBaseRDDFunctions {
-  implicit def rddToMLBaseRDDFunctions[T: ClassManifest](rdd: RDD[T]) = new MLBaseRDDFunctions(rdd)
+object MLiRDDFunctions {
+  implicit def rddToMLBaseRDDFunctions[T: ClassManifest](rdd: RDD[T]) = new MLiRDDFunctions(rdd)
 }

@@ -6,11 +6,42 @@ import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.Logging
-import org.apache.spark.mllib.util._
 import org.apache.spark.broadcast._
-import org.mlbase.runtime.MLBaseRDDFunctions._
+
+import org.apache.spark.mllib.util._
+import org.apache.spark.mllib.util.MLiRDDFunctions._
+
 
 import breeze.linalg._
+
+
+case class BPMeansModelParameters(
+  trainingTime: Array[Long],
+  features: Array[DenseVector[Double]],
+  numFeatures: Array[Int],
+  numProposed: Array[Int],
+  numAccepted: Array[Int],
+  objVals: Array[Double]
+)// extends ModelParameters(trainingTime.last)
+
+case class BPMeansModel (
+  data: RDD[DenseVector[Double]],
+  trainParams: BPMeansParameters,
+  params: BPMeansModelParameters
+)// extends Model(data, trainParams, params)
+{
+
+  def predict(x: DenseVector[Double]) : Null = {
+    null
+  }
+
+  def explain() = {
+    // TODO
+  }
+
+}
+
+
 
 case class BPMeansParameters(
   lambda: Double,
@@ -28,7 +59,7 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
     val numProcessors = params.get("numProcessors").get.toInt
     val maxIterations = params.get("maxIterations").get.toInt
     new BPMeansParameters(lambda,blockSize,numProcessors,maxIterations)
-  } 
+  }
 
   def intersectSortedArrays(a: Array[Int], b: Array[Int]) : Array[Int] = {
     var i=0
@@ -248,7 +279,7 @@ object BPMeansAlgorithm //extends Algorithm[DenseVector[Double], Null, BPMeansPa
         }
         // Add new features to sampled Z
         val newFeatures_bc = sc.broadcast(newFeatures)
-        Z(t) = (Z_residual.map(_._1) zip 
+        Z(t) = (Z_residual.map(_._1) zip
           (Z_residual.map(_._2) zip Z_residual.map(_=> Array[Boolean]()))
           .map(rz => sampleZ(rz._1,rz._2,newFeatures_bc)).map(_._1)).map(
           zz => zz._1 ++ zz._2
